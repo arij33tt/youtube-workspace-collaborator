@@ -71,14 +71,7 @@ exports.uploadVideo = async (req, res) => {
     const access = await ensureWorkspaceAccess(workspaceId, userId);
     if (!access.ok) return res.status(access.status).json({ message: access.message });
 
-    // Verify storage bucket exists before proceeding
-    const storageBucket = admin.storage().bucket();
-    const [bucketExists] = await storageBucket.exists();
-    if (!bucketExists) {
-      return res.status(500).json({
-        message: `Storage bucket '${storageBucket.name}' not found. Enable Firebase Storage in your Firebase Console and/or set FIREBASE_STORAGE_BUCKET to your actual bucket name.`,
-      });
-    }
+    const storageMode = (process.env.STORAGE_PROVIDER || 'firebase').toLowerCase();
 
     // Create video doc
     const videoRef = db.collection('videos').doc();
@@ -99,32 +92,61 @@ exports.uploadVideo = async (req, res) => {
     });
 
     // Upload to storage
-    const bucket = admin.storage().bucket();
-    // Upload video
-    const videoPath = `videos/${workspaceId}/${videoId}/${Date.now()}-${videoFile.originalname}`;
-    const videoObj = bucket.file(videoPath);
-    await new Promise((resolve, reject) => {
-      const stream = videoObj.createWriteStream({ metadata: { contentType: videoFile.mimetype } });
-      stream.on('error', reject);
-      stream.on('finish', resolve);
-      stream.end(videoFile.buffer);
-    });
-    await videoObj.makePublic();
-    const videoUrl = `https://storage.googleapis.com/${bucket.name}/${videoPath}`;
-
-    // Upload thumbnail if provided
+    let videoUrl = null;
     let thumbnailUrl = null;
-    if (thumbFile) {
-      const thumbPath = `thumbnails/${workspaceId}/${videoId}/${Date.now()}-${thumbFile.originalname}`;
-      const thumbObj = bucket.file(thumbPath);
+
+    if (storageMode === 'local') {
+      // Local disk storage
+      const baseDir = path.join(__dirname, '..', 'uploads');
+      const videoDir = path.join(baseDir, 'videos', workspaceId, videoId);
+      const thumbDir = path.join(baseDir, 'thumbnails', workspaceId, videoId);
+      await fsp.mkdir(videoDir, { recursive: true });
+      await fsp.mkdir(thumbDir, { recursive: true });
+
+      const videoFilename = `${Date.now()}-${videoFile.originalname}`;
+      const videoFsPath = path.join(videoDir, videoFilename);
+      await fsp.writeFile(videoFsPath, videoFile.buffer);
+      videoUrl = `/uploads/videos/${workspaceId}/${videoId}/${videoFilename}`;
+
+      if (thumbFile) {
+        const thumbFilename = `${Date.now()}-${thumbFile.originalname}`;
+        const thumbFsPath = path.join(thumbDir, thumbFilename);
+        await fsp.writeFile(thumbFsPath, thumbFile.buffer);
+        thumbnailUrl = `/uploads/thumbnails/${workspaceId}/${videoId}/${thumbFilename}`;
+      }
+    } else {
+      // Firebase Storage
+      const storageBucket = admin.storage().bucket();
+      const [bucketExists] = await storageBucket.exists();
+      if (!bucketExists) {
+        return res.status(500).json({
+          message: `Storage bucket '${storageBucket.name}' not found. Enable Firebase Storage or set STORAGE_PROVIDER=local in server/.env to save files locally.`,
+        });
+      }
+
+      const videoPath = `videos/${workspaceId}/${videoId}/${Date.now()}-${videoFile.originalname}`;
+      const videoObj = storageBucket.file(videoPath);
       await new Promise((resolve, reject) => {
-        const stream = thumbObj.createWriteStream({ metadata: { contentType: thumbFile.mimetype } });
+        const stream = videoObj.createWriteStream({ metadata: { contentType: videoFile.mimetype } });
         stream.on('error', reject);
         stream.on('finish', resolve);
-        stream.end(thumbFile.buffer);
+        stream.end(videoFile.buffer);
       });
-      await thumbObj.makePublic();
-      thumbnailUrl = `https://storage.googleapis.com/${bucket.name}/${thumbPath}`;
+      await videoObj.makePublic();
+      videoUrl = `https://storage.googleapis.com/${storageBucket.name}/${videoPath}`;
+
+      if (thumbFile) {
+        const thumbPath = `thumbnails/${workspaceId}/${videoId}/${Date.now()}-${thumbFile.originalname}`;
+        const thumbObj = storageBucket.file(thumbPath);
+        await new Promise((resolve, reject) => {
+          const stream = thumbObj.createWriteStream({ metadata: { contentType: thumbFile.mimetype } });
+          stream.on('error', reject);
+          stream.on('finish', resolve);
+          stream.end(thumbFile.buffer);
+        });
+        await thumbObj.makePublic();
+        thumbnailUrl = `https://storage.googleapis.com/${storageBucket.name}/${thumbPath}`;
+      }
     }
 
     // Create first version in subcollection
@@ -268,37 +290,60 @@ exports.uploadVersion = async (req, res) => {
     lastSnap.forEach((d) => { nextVersion = (d.data().versionNumber || 0) + 1; });
 
     // Upload file to storage
-    const bucket = admin.storage().bucket();
-    const [bucketExistsV] = await bucket.exists();
-    if (!bucketExistsV) {
-      return res.status(500).json({
-        message: `Storage bucket '${bucket.name}' not found. Enable Firebase Storage in your Firebase Console and/or set FIREBASE_STORAGE_BUCKET to your actual bucket name.`,
-      });
-    }
-    const videoPath = `videos/${video.workspaceId}/${videoId}/${Date.now()}-${videoFile.originalname}`;
-    const file = bucket.file(videoPath);
-    await new Promise((resolve, reject) => {
-      const stream = file.createWriteStream({ metadata: { contentType: videoFile.mimetype } });
-      stream.on('error', reject);
-      stream.on('finish', resolve);
-      stream.end(videoFile.buffer);
-    });
-    await file.makePublic();
-    const videoUrl = `https://storage.googleapis.com/${bucket.name}/${videoPath}`;
+    const storageModeV = (process.env.STORAGE_PROVIDER || 'firebase').toLowerCase();
 
-    // Optional thumbnail update for this version
+    let videoUrl = null;
     let thumbnailUrl = null;
-    if (thumbFile) {
-      const thumbPath = `thumbnails/${video.workspaceId}/${videoId}/${Date.now()}-${thumbFile.originalname}`;
-      const thumbObj = bucket.file(thumbPath);
+
+    if (storageModeV === 'local') {
+      const baseDir = path.join(__dirname, '..', 'uploads');
+      const videoDir = path.join(baseDir, 'videos', video.workspaceId, videoId);
+      const thumbDir = path.join(baseDir, 'thumbnails', video.workspaceId, videoId);
+      await fsp.mkdir(videoDir, { recursive: true });
+      await fsp.mkdir(thumbDir, { recursive: true });
+
+      const videoFilename = `${Date.now()}-${videoFile.originalname}`;
+      const videoFsPath = path.join(videoDir, videoFilename);
+      await fsp.writeFile(videoFsPath, videoFile.buffer);
+      videoUrl = `/uploads/videos/${video.workspaceId}/${videoId}/${videoFilename}`;
+
+      if (thumbFile) {
+        const thumbFilename = `${Date.now()}-${thumbFile.originalname}`;
+        const thumbFsPath = path.join(thumbDir, thumbFilename);
+        await fsp.writeFile(thumbFsPath, thumbFile.buffer);
+        thumbnailUrl = `/uploads/thumbnails/${video.workspaceId}/${videoId}/${thumbFilename}`;
+      }
+    } else {
+      const bucket = admin.storage().bucket();
+      const [bucketExistsV] = await bucket.exists();
+      if (!bucketExistsV) {
+        return res.status(500).json({
+          message: `Storage bucket '${bucket.name}' not found. Enable Firebase Storage or set STORAGE_PROVIDER=local in server/.env to save files locally.`,
+        });
+      }
+      const videoPath = `videos/${video.workspaceId}/${videoId}/${Date.now()}-${videoFile.originalname}`;
+      const file = bucket.file(videoPath);
       await new Promise((resolve, reject) => {
-        const stream = thumbObj.createWriteStream({ metadata: { contentType: thumbFile.mimetype } });
+        const stream = file.createWriteStream({ metadata: { contentType: videoFile.mimetype } });
         stream.on('error', reject);
         stream.on('finish', resolve);
-        stream.end(thumbFile.buffer);
+        stream.end(videoFile.buffer);
       });
-      await thumbObj.makePublic();
-      thumbnailUrl = `https://storage.googleapis.com/${bucket.name}/${thumbPath}`;
+      await file.makePublic();
+      videoUrl = `https://storage.googleapis.com/${bucket.name}/${videoPath}`;
+
+      if (thumbFile) {
+        const thumbPath = `thumbnails/${video.workspaceId}/${videoId}/${Date.now()}-${thumbFile.originalname}`;
+        const thumbObj = bucket.file(thumbPath);
+        await new Promise((resolve, reject) => {
+          const stream = thumbObj.createWriteStream({ metadata: { contentType: thumbFile.mimetype } });
+          stream.on('error', reject);
+          stream.on('finish', resolve);
+          stream.end(thumbFile.buffer);
+        });
+        await thumbObj.makePublic();
+        thumbnailUrl = `https://storage.googleapis.com/${bucket.name}/${thumbPath}`;
+      }
     }
 
     const now = admin.firestore.FieldValue.serverTimestamp();
