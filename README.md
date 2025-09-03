@@ -46,4 +46,3 @@ A web platform where YouTube creators and editors can collaborate on video uploa
 
 ## License
 
-MIT

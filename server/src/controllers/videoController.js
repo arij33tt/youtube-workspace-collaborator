@@ -106,13 +106,15 @@ exports.uploadVideo = async (req, res) => {
       const videoFilename = `${Date.now()}-${videoFile.originalname}`;
       const videoFsPath = path.join(videoDir, videoFilename);
       await fsp.writeFile(videoFsPath, videoFile.buffer);
-      videoUrl = `/uploads/videos/${workspaceId}/${videoId}/${videoFilename}`;
+      const relVideoUrl = `/uploads/videos/${workspaceId}/${videoId}/${videoFilename}`;
+      videoUrl = `${req.protocol}://${req.get('host')}${relVideoUrl}`;
 
       if (thumbFile) {
         const thumbFilename = `${Date.now()}-${thumbFile.originalname}`;
         const thumbFsPath = path.join(thumbDir, thumbFilename);
         await fsp.writeFile(thumbFsPath, thumbFile.buffer);
-        thumbnailUrl = `/uploads/thumbnails/${workspaceId}/${videoId}/${thumbFilename}`;
+        const relThumbUrl = `/uploads/thumbnails/${workspaceId}/${videoId}/${thumbFilename}`;
+        thumbnailUrl = `${req.protocol}://${req.get('host')}${relThumbUrl}`;
       }
     } else {
       // Firebase Storage
@@ -132,8 +134,11 @@ exports.uploadVideo = async (req, res) => {
         stream.on('finish', resolve);
         stream.end(videoFile.buffer);
       });
-      await videoObj.makePublic();
-      videoUrl = `https://storage.googleapis.com/${storageBucket.name}/${videoPath}`;
+      const [signedVideoUrl] = await videoObj.getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
+      videoUrl = signedVideoUrl;
 
       if (thumbFile) {
         const thumbPath = `thumbnails/${workspaceId}/${videoId}/${Date.now()}-${thumbFile.originalname}`;
@@ -144,8 +149,11 @@ exports.uploadVideo = async (req, res) => {
           stream.on('finish', resolve);
           stream.end(thumbFile.buffer);
         });
-        await thumbObj.makePublic();
-        thumbnailUrl = `https://storage.googleapis.com/${storageBucket.name}/${thumbPath}`;
+        const [signedThumbUrl] = await thumbObj.getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        });
+        thumbnailUrl = signedThumbUrl;
       }
     }
 
@@ -305,13 +313,15 @@ exports.uploadVersion = async (req, res) => {
       const videoFilename = `${Date.now()}-${videoFile.originalname}`;
       const videoFsPath = path.join(videoDir, videoFilename);
       await fsp.writeFile(videoFsPath, videoFile.buffer);
-      videoUrl = `/uploads/videos/${video.workspaceId}/${videoId}/${videoFilename}`;
+      const relVideoUrl = `/uploads/videos/${video.workspaceId}/${videoId}/${videoFilename}`;
+      videoUrl = `${req.protocol}://${req.get('host')}${relVideoUrl}`;
 
       if (thumbFile) {
         const thumbFilename = `${Date.now()}-${thumbFile.originalname}`;
         const thumbFsPath = path.join(thumbDir, thumbFilename);
         await fsp.writeFile(thumbFsPath, thumbFile.buffer);
-        thumbnailUrl = `/uploads/thumbnails/${video.workspaceId}/${videoId}/${thumbFilename}`;
+        const relThumbUrl = `/uploads/thumbnails/${video.workspaceId}/${videoId}/${thumbFilename}`;
+        thumbnailUrl = `${req.protocol}://${req.get('host')}${relThumbUrl}`;
       }
     } else {
       const bucket = admin.storage().bucket();
@@ -329,8 +339,11 @@ exports.uploadVersion = async (req, res) => {
         stream.on('finish', resolve);
         stream.end(videoFile.buffer);
       });
-      await file.makePublic();
-      videoUrl = `https://storage.googleapis.com/${bucket.name}/${videoPath}`;
+      const [signedVideoUrlV] = await file.getSignedUrl({
+        action: 'read',
+        expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+      });
+      videoUrl = signedVideoUrlV;
 
       if (thumbFile) {
         const thumbPath = `thumbnails/${video.workspaceId}/${videoId}/${Date.now()}-${thumbFile.originalname}`;
@@ -341,8 +354,11 @@ exports.uploadVersion = async (req, res) => {
           stream.on('finish', resolve);
           stream.end(thumbFile.buffer);
         });
-        await thumbObj.makePublic();
-        thumbnailUrl = `https://storage.googleapis.com/${bucket.name}/${thumbPath}`;
+        const [signedThumbUrlV] = await thumbObj.getSignedUrl({
+          action: 'read',
+          expires: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        });
+        thumbnailUrl = signedThumbUrlV;
       }
     }
 
