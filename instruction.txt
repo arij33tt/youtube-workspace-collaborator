@@ -1,1 +1,0 @@
-I dont have a google ddeveloper account, so I guess its not possible to get the api and direct youtube api, for this problem , i am thinking of buliting a my own youtube web , where everythings is same as youtube but its my own youtube with own database , for database i am thining to use different database for this project like supabase databse 
